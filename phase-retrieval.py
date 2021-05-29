@@ -4,8 +4,8 @@
 @author: Rebecca
 """
 import numpy as np
-import cvxpy as cp
 from numpy import linalg as LA
+import cvxpy as cp
 from matplotlib import pyplot as plt
 import scipy.fftpack
 from scipy.linalg import dft
@@ -117,23 +117,72 @@ x_f, _ = fienup(b, A_n)
 x_m, _ = phasemax(b, A_n)
 
 #%% PhaseLift
-X = cp.Variable((n,n), PSD=True)
+# x = cp.Variable((n,1))
+# X = x@x.T
+# x = cp.Variable((n,1),complex=True)
+# X = x@x.H
+import mosek
+#%%
+X = cp.Variable((n,n),symmetric = True)
 l = 1e-2
 bb = np.square(b)
 obj = 0
-# Ax = []
-# for i in range(m):
-#     z = cp.reshape(cp.abs(np.expand_dims(A_n[i,:],0) @ X @ np.expand_dims(A_n[i,:],1)),(1,))
-#     Ax.append(z)
-    # obj += cp.square(z - bb[i])
-obj += 0.5*cp.sum_squares(cp.diag(A_n@X@A_n.T) - bb)
+Ax = []
+for i in range(m):
+    z = np.expand_dims(A_n[i,:],1)@np.expand_dims(A_n[i,:],0)
+    Ax.append(z)
+constr = [X >> 0]
+constr += [
+    (cp.trace((Ax[i] @ X))) == bb[i] for i in range(m)
+]
+# obj += 0.5*cp.sum_squares(cp.diag(A_n@X@A_n.T) - bb)
 # obj += cp.sum_squares(cp.reshape(A_n @ x,(300,)) - bb)
-obj += cp.trace(X)
-# constr = [A_n@X == b]
-# prob = cp.Problem(cp.Minimize(obj), constr)
-prob = cp.Problem(cp.Minimize(obj))
-prob.solve(solver=cp.SCS, max_iters=10,verbose=True)
-
+obj = (cp.trace(X))
+# constr = [cp.trace(A_n@X@A_n.T) == bb, X>>0]
+#%%
+prob = cp.Problem(cp.Minimize(obj), constr)
+# prob = cp.Problem(cp.Minimize(obj))
+prob.solve(solver=cp.MOSEK,verbose=True)
+#%%
 x_hat = np.sqrt(np.diag(X.value))
 r = norm_err(x_hat)
 print(r)
+
+#%%
+# x = cp.Variable((n,1),complex=True)
+# X = x@cp.conj(x).T
+X = cp.Variable((m,m),hermitian = True)
+M = np.diag(b)@ (np.identity(m) - A_n @ LA.pinv(A_n)) @ np.diag(b)
+obj = cp.real(cp.trace(X@M))
+constr = [X >> 0]
+constr += [cp.diag(X) == np.ones(m,)]
+prob = cp.Problem(cp.Minimize(obj), constr)
+# prob = cp.Problem(cp.Minimize(obj))
+prob.solve(solver=cp.MOSEK,verbose=True)
+#%%
+# Generate a random SDP.
+n = 3
+p = 3
+np.random.seed(1)
+A = []
+b = []
+for i in range(p):
+    A.append(np.random.randn(n, n) + np.random.randn(n, n)*1j)
+    b.append(np.random.randn())
+
+# Define and solve the CVXPY problem.
+# Create a symmetric matrix variable.
+X = cp.Variable((n,n), symmetric=True)
+# The operator >> denotes matrix inequality.
+constraints = [X >> 0]
+constraints += [
+    cp.trace(A[i] @ X) == b[i] for i in range(p)
+]
+prob = cp.Problem(cp.Minimize(cp.trace(X)),
+                  constraints)
+prob.solve()
+
+# Print result.
+print("The optimal value is", prob.value)
+print("A solution X is")
+print(X.value)
