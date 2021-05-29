@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 
-@author: Rebecca
+@author: Rebecca Wong
+@project: EE364B Final Project, Spring 2021
 """
 import numpy as np
 from numpy import linalg as LA
@@ -11,9 +12,8 @@ import scipy.fftpack
 from scipy.linalg import dft
 import mosek
 
-#%% Signal Construction
-np.random.seed(0)
-
+#%% 
+## Signal Construction##
 def A(x):
     # FFT Operator to map x from R^n to R^m
    xp = np.pad(x,(0,m-n))
@@ -60,6 +60,7 @@ def validate_signal(A_n, x0, noise = False):
 def norm_err(xhat):
     return LA.norm(b - np.abs(A_n @ xhat))/ LA.norm(b)
 
+## Alternating Projections ##
 def fienup(b,A_n):
     xk = np.random.rand(n) # initial guess
     err = []
@@ -80,6 +81,42 @@ def fienup(b,A_n):
     print("Min Error: %0.4f" % r)
     return xk, err
 
+## PhaseLift ##
+def phaselift(b,A_n):
+    X = cp.Variable((n,n),symmetric = True)
+    bb = np.square(b)
+    Ax = []
+    for i in range(m):
+        z = np.expand_dims(A_n[i,:],1)@np.expand_dims(A_n[i,:],0)
+        Ax.append(z)
+    constr = [X >> 0]
+    constr += [
+        (cp.trace((Ax[i] @ X))) == bb[i] for i in range(m)
+    ]
+    obj = cp.real(cp.trace(X))
+    prob = cp.Problem(cp.Minimize(obj), constr)
+    prob.solve(solver=cp.MOSEK,verbose=True)
+    x_hat = np.sqrt(np.diag(X.value))
+    err = norm_err(A_inv(x_hat))
+    print("PhaseLift error: %0.4f" % err)
+    return x_hat, err
+
+## PhaseCut ##
+def phasecut(b,A_n):
+    X = cp.Variable((m,m),hermitian = True)
+    M = np.diag(b)@ (np.identity(m) - A_n @ LA.pinv(A_n)) @ np.diag(b)
+    obj = cp.real(cp.trace(X@M))
+    constr = [X >> 0]
+    constr += [cp.diag(X) == np.ones(m,)]
+    prob = cp.Problem(cp.Minimize(obj), constr)
+    prob.solve(solver=cp.MOSEK)
+    p = LA.eig(X.value)[1][:,0]
+    x_hat = reconstruct(b,p)
+    err = norm_err(A_inv(x_hat))
+    print("PhaseCut error: %0.4f" % err)
+    return x_hat, err
+
+## PhaseMax ##
 def phasemax(b,A_n):
     xhat = np.random.rand(n)
     err = []
@@ -104,41 +141,8 @@ def phasemax(b,A_n):
     print("Min Error: %0.4f" % r)   
     return xhat, err
 
-def phasecut(b,A_n):
-    X = cp.Variable((m,m),hermitian = True)
-    M = np.diag(b)@ (np.identity(m) - A_n @ LA.pinv(A_n)) @ np.diag(b)
-    obj = cp.real(cp.trace(X@M))
-    constr = [X >> 0]
-    constr += [cp.diag(X) == np.ones(m,)]
-    prob = cp.Problem(cp.Minimize(obj), constr)
-    prob.solve(solver=cp.MOSEK)
-    p = LA.eig(X.value)[1][:,0]
-    x_hat = reconstruct(b,p)
-    err = norm_err(A_inv(x_hat))
-    print("PhaseCut error: %0.4f" % err)
-    return x_hat, err
-
-def phaselift(b,A_n):
-    X = cp.Variable((n,n),symmetric = True)
-    bb = np.square(b)
-    Ax = []
-    for i in range(m):
-        z = np.expand_dims(A_n[i,:],1)@np.expand_dims(A_n[i,:],0)
-        Ax.append(z)
-    constr = [X >> 0]
-    constr += [
-        (cp.trace((Ax[i] @ X))) == bb[i] for i in range(m)
-    ]
-    obj = cp.real(cp.trace(X))
-    prob = cp.Problem(cp.Minimize(obj), constr)
-    prob.solve(solver=cp.MOSEK,verbose=True)
-    x_hat = np.sqrt(np.diag(X.value))
-    err = norm_err(A_inv(x_hat))
-    print("PhaseLift error: %0.4f" % err)
-    return x_hat, err
-
-n = 10
-m = 30
+n = 50 # signal dimension
+m = 100 # measurement dimension
 alpha = 0.2 # noise parameter
 noise = True
 x0, b = construct_signal(m,n,noise=noise,alpha=alpha)
@@ -148,6 +152,6 @@ if(not noise):
     validate_signal(A_n, x0)
 #%%
 x_f, _ = fienup(b, A_n)
-x_m, _ = phasemax(b, A_n)
 x_c, _ = phasecut(b, A_n)
+x_m, _ = phasemax(b, A_n)
 # x_l, _ = phaselift(b, A_n)
